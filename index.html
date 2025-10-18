@@ -127,6 +127,10 @@
             margin-bottom: 20px;
         }
         
+        #modeSelection {
+            margin: 20px 0;
+        }
+        
         button {
             background: #000;
             color: #fff;
@@ -154,11 +158,14 @@
     <div id="gameContainer">
         <div id="startScreen">
             <h1>PONG</h1>
-            <p>GIOCATORE vs GIOCATORE</p>
-            <button id="startButton">INIZIA</button>
+            <div id="modeSelection">
+                <p>SELEZIONA MODALITÀ:</p>
+                <button id="vsPlayerButton">VS GIOCATORE</button>
+                <button id="vsComputerButton">VS COMPUTER</button>
+            </div>
             <div id="controls">
-                <p class="desktop-controls">W / S - Racchetta sinistra | ↑ / ↓ - Racchetta destra</p>
-                <p class="mobile-controls" style="display:none;">Tocca la metà sinistra/destra dello schermo per muovere le racchette</p>
+                <p class="desktop-controls">W / S o ↑ / ↓ per muovere</p>
+                <p class="mobile-controls" style="display:none;">Tocca sinistra/destra per muovere</p>
             </div>
         </div>
         <div id="score">0 - 0</div>
@@ -168,8 +175,8 @@
             <div class="touch-area touch-right" id="touchRight"></div>
         </div>
         <div id="controls">
-            <p class="desktop-controls">Giocatore 1: W/S | Giocatore 2: ↑/↓ | SPAZIO: Pausa</p>
-            <p class="mobile-controls" style="display:none;">Tocca sinistra/destra per muovere | Tocca centro per pausa</p>
+            <p class="desktop-controls">W/S o ↑/↓ per muovere | SPAZIO: Pausa</p>
+            <p class="mobile-controls" style="display:none;">Tocca sinistra per muovere | Centro per pausa</p>
         </div>
     </div>
 
@@ -182,6 +189,9 @@
         let gameRunning = false;
         let paused = false;
         let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        let vsComputer = false;
+        let aiSpeed = 4;
+        let aiReactionDelay = 0;
         
         if (isMobile) {
             document.querySelectorAll('.desktop-controls').forEach(el => el.style.display = 'none');
@@ -223,11 +233,28 @@
         
         const touchLeft = document.getElementById('touchLeft');
         const touchRight = document.getElementById('touchRight');
-        const startButton = document.getElementById('startButton');
+        const vsPlayerButton = document.getElementById('vsPlayerButton');
+        const vsComputerButton = document.getElementById('vsComputerButton');
         
-        startButton.addEventListener('click', startGame);
-        startButton.addEventListener('touchend', function(e) {
+        vsPlayerButton.addEventListener('click', function() {
+            vsComputer = false;
+            startGame();
+        });
+        
+        vsPlayerButton.addEventListener('touchend', function(e) {
             e.preventDefault();
+            vsComputer = false;
+            startGame();
+        });
+        
+        vsComputerButton.addEventListener('click', function() {
+            vsComputer = true;
+            startGame();
+        });
+        
+        vsComputerButton.addEventListener('touchend', function(e) {
+            e.preventDefault();
+            vsComputer = true;
             startGame();
         });
         
@@ -361,14 +388,16 @@
                     touchTracking.left.startY = touchTracking.left.currentY;
                 }
                 
-                if (touchTracking.right.id !== null) {
+                if (!vsComputer && touchTracking.right.id !== null) {
                     const delta = touchTracking.right.currentY - touchTracking.right.startY;
                     player2.y += delta * 0.5;
                     touchTracking.right.startY = touchTracking.right.currentY;
                 }
                 
                 player1.y = Math.max(0, Math.min(canvas.height - paddle.height, player1.y));
-                player2.y = Math.max(0, Math.min(canvas.height - paddle.height, player2.y));
+                if (!vsComputer) {
+                    player2.y = Math.max(0, Math.min(canvas.height - paddle.height, player2.y));
+                }
             } else {
                 if (player1.upKey && player1.y > 0) {
                     player1.y -= paddle.speed;
@@ -377,13 +406,41 @@
                     player1.y += paddle.speed;
                 }
                 
-                if (player2.upKey && player2.y > 0) {
-                    player2.y -= paddle.speed;
-                }
-                if (player2.downKey && player2.y < canvas.height - paddle.height) {
-                    player2.y += paddle.speed;
+                if (!vsComputer) {
+                    if (player2.upKey && player2.y > 0) {
+                        player2.y -= paddle.speed;
+                    }
+                    if (player2.downKey && player2.y < canvas.height - paddle.height) {
+                        player2.y += paddle.speed;
+                    }
                 }
             }
+            
+            if (vsComputer) {
+                updateAI();
+            }
+        }
+        
+        function updateAI() {
+            const paddleCenter = player2.y + paddle.height / 2;
+            const targetY = ball.y;
+            
+            if (ball.speedX > 0) {
+                if (paddleCenter < targetY - 10) {
+                    player2.y += aiSpeed;
+                } else if (paddleCenter > targetY + 10) {
+                    player2.y -= aiSpeed;
+                }
+            } else {
+                const centerCourt = canvas.height / 2;
+                if (paddleCenter < centerCourt - 5) {
+                    player2.y += aiSpeed * 0.5;
+                } else if (paddleCenter > centerCourt + 5) {
+                    player2.y -= aiSpeed * 0.5;
+                }
+            }
+            
+            player2.y = Math.max(0, Math.min(canvas.height - paddle.height, player2.y));
         }
         
         function updateBall() {
