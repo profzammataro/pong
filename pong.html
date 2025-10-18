@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tennis Vintage Atari</title>
+    <style>
+        * {
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            touch-action: none;
+        }
+        
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #000;
+            font-family: 'Courier New', monospace;
+            color: #fff;
+            overflow: hidden;
+        }
+        
+        #gameContainer {
+            text-align: center;
+            width: 100%;
+            max-width: 100vw;
+        }
+        
+        canvas {
+            border: 2px solid #fff;
+            display: block;
+            margin: 10px auto;
+            background: #000;
+            max-width: 100%;
+            height: auto;
+        }
+        
+        @media (max-width: 768px) {
+            canvas {
+                width: 100vw;
+                height: auto;
+                border: none;
+            }
+        }
+        
+        #score {
+            font-size: 36px;
+            margin: 10px 0;
+            letter-spacing: 10px;
+        }
+        
+        @media (max-width: 768px) {
+            #score {
+                font-size: 28px;
+                letter-spacing: 5px;
+            }
+        }
+        
+        #controls {
+            font-size: 12px;
+            margin-top: 10px;
+            opacity: 0.7;
+            padding: 0 10px;
+        }
+        
+        @media (max-width: 768px) {
+            #controls {
+                font-size: 10px;
+            }
+        }
+        
+        .touch-controls {
+            display: none;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 200px;
+            pointer-events: none;
+        }
+        
+        @media (max-width: 768px) {
+            .touch-controls {
+                display: block;
+            }
+        }
+        
+        .touch-area {
+            position: absolute;
+            width: 50%;
+            height: 100%;
+            pointer-events: all;
+            opacity: 0.1;
+            background: #fff;
+        }
+        
+        .touch-area:active {
+            opacity: 0.2;
+        }
+        
+        .touch-left {
+            left: 0;
+        }
+        
+        .touch-right {
+            right: 0;
+        }
+        
+        #startScreen {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.95);
+            padding: 40px;
+            border: 2px solid #fff;
+            display: none;
+            z-index: 1000;
+            pointer-events: all;
+        }
+        
+        #startScreen h1 {
+            font-size: 36px;
+            margin-bottom: 20px;
+        }
+        
+        button {
+            background: #000;
+            color: #fff;
+            border: 2px solid #fff;
+            padding: 10px 30px;
+            font-size: 18px;
+            font-family: 'Courier New', monospace;
+            cursor: pointer;
+            margin: 10px;
+            pointer-events: all;
+        }
+        
+        button:hover {
+            background: #fff;
+            color: #000;
+        }
+        
+        button:active {
+            background: #fff;
+            color: #000;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <div id="startScreen">
+            <h1>PONG</h1>
+            <p>GIOCATORE vs GIOCATORE</p>
+            <button id="startButton">INIZIA</button>
+            <div id="controls">
+                <p class="desktop-controls">W / S - Racchetta sinistra | ↑ / ↓ - Racchetta destra</p>
+                <p class="mobile-controls" style="display:none;">Tocca la metà sinistra/destra dello schermo per muovere le racchette</p>
+            </div>
+        </div>
+        <div id="score">0 - 0</div>
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div class="touch-controls">
+            <div class="touch-area touch-left" id="touchLeft"></div>
+            <div class="touch-area touch-right" id="touchRight"></div>
+        </div>
+        <div id="controls">
+            <p class="desktop-controls">Giocatore 1: W/S | Giocatore 2: ↑/↓ | SPAZIO: Pausa</p>
+            <p class="mobile-controls" style="display:none;">Tocca sinistra/destra per muovere | Tocca centro per pausa</p>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('score');
+        const startScreen = document.getElementById('startScreen');
+        
+        let gameRunning = false;
+        let paused = false;
+        let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        
+        if (isMobile) {
+            document.querySelectorAll('.desktop-controls').forEach(el => el.style.display = 'none');
+            document.querySelectorAll('.mobile-controls').forEach(el => el.style.display = 'block');
+            canvas.width = Math.min(window.innerWidth, 800);
+            canvas.height = Math.min(window.innerHeight - 100, 600);
+        }
+        
+        const paddle = {
+            width: 10,
+            height: isMobile ? 80 : 100,
+            speed: isMobile ? 8 : 6
+        };
+        
+        const ball = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            radius: 8,
+            speedX: 5,
+            speedY: 5,
+            maxSpeed: 12
+        };
+        
+        const player1 = {
+            x: 20,
+            y: canvas.height / 2 - paddle.height / 2,
+            score: 0,
+            upKey: false,
+            downKey: false
+        };
+        
+        const player2 = {
+            x: canvas.width - 30,
+            y: canvas.height / 2 - paddle.height / 2,
+            score: 0,
+            upKey: false,
+            downKey: false
+        };
+        
+        const touchLeft = document.getElementById('touchLeft');
+        const touchRight = document.getElementById('touchRight');
+        const startButton = document.getElementById('startButton');
+        
+        startButton.addEventListener('click', startGame);
+        startButton.addEventListener('touchend', function(e) {
+            e.preventDefault();
+            startGame();
+        });
+        
+        let touchTracking = {
+            left: { id: null, startY: 0, currentY: 0 },
+            right: { id: null, startY: 0, currentY: 0 }
+        };
+        
+        function handleTouchStart(e) {
+            e.preventDefault();
+            const touches = e.changedTouches;
+            
+            for (let i = 0; i < touches.length; i++) {
+                const touch = touches[i];
+                const rect = canvas.getBoundingClientRect();
+                const x = touch.clientX;
+                const y = touch.clientY;
+                
+                if (x < window.innerWidth / 3) {
+                    touchTracking.left.id = touch.identifier;
+                    touchTracking.left.startY = y;
+                    touchTracking.left.currentY = y;
+                } else if (x > window.innerWidth * 2 / 3) {
+                    touchTracking.right.id = touch.identifier;
+                    touchTracking.right.startY = y;
+                    touchTracking.right.currentY = y;
+                } else {
+                    paused = !paused;
+                }
+            }
+        }
+        
+        function handleTouchMove(e) {
+            e.preventDefault();
+            const touches = e.changedTouches;
+            
+            for (let i = 0; i < touches.length; i++) {
+                const touch = touches[i];
+                
+                if (touch.identifier === touchTracking.left.id) {
+                    touchTracking.left.currentY = touch.clientY;
+                } else if (touch.identifier === touchTracking.right.id) {
+                    touchTracking.right.currentY = touch.clientY;
+                }
+            }
+        }
+        
+        function handleTouchEnd(e) {
+            e.preventDefault();
+            const touches = e.changedTouches;
+            
+            for (let i = 0; i < touches.length; i++) {
+                const touch = touches[i];
+                
+                if (touch.identifier === touchTracking.left.id) {
+                    touchTracking.left.id = null;
+                } else if (touch.identifier === touchTracking.right.id) {
+                    touchTracking.right.id = null;
+                }
+            }
+        }
+        
+        if (isMobile) {
+            document.addEventListener('touchstart', handleTouchStart, { passive: false });
+            document.addEventListener('touchmove', handleTouchMove, { passive: false });
+            document.addEventListener('touchend', handleTouchEnd, { passive: false });
+            document.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+        }
+        
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                e.preventDefault();
+                paused = !paused;
+            }
+            if (e.key === 'w' || e.key === 'W') player1.upKey = true;
+            if (e.key === 's' || e.key === 'S') player1.downKey = true;
+            if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                player2.upKey = true;
+            }
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                player2.downKey = true;
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'w' || e.key === 'W') player1.upKey = false;
+            if (e.key === 's' || e.key === 'S') player1.downKey = false;
+            if (e.key === 'ArrowUp') player2.upKey = false;
+            if (e.key === 'ArrowDown') player2.downKey = false;
+        });
+        
+        function startGame() {
+            startScreen.style.display = 'none';
+            gameRunning = true;
+            resetBall();
+            gameLoop();
+        }
+        
+        function resetBall() {
+            ball.x = canvas.width / 2;
+            ball.y = canvas.height / 2;
+            ball.speedX = (Math.random() > 0.5 ? 1 : -1) * 5;
+            ball.speedY = (Math.random() - 0.5) * 8;
+        }
+        
+        function drawRect(x, y, w, h) {
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(x, y, w, h);
+        }
+        
+        function drawCircle(x, y, r) {
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        function drawNet() {
+            for (let i = 0; i < canvas.height; i += 30) {
+                drawRect(canvas.width / 2 - 2, i, 4, 20);
+            }
+        }
+        
+        function updatePaddles() {
+            if (isMobile) {
+                if (touchTracking.left.id !== null) {
+                    const delta = touchTracking.left.currentY - touchTracking.left.startY;
+                    player1.y += delta * 0.5;
+                    touchTracking.left.startY = touchTracking.left.currentY;
+                }
+                
+                if (touchTracking.right.id !== null) {
+                    const delta = touchTracking.right.currentY - touchTracking.right.startY;
+                    player2.y += delta * 0.5;
+                    touchTracking.right.startY = touchTracking.right.currentY;
+                }
+                
+                player1.y = Math.max(0, Math.min(canvas.height - paddle.height, player1.y));
+                player2.y = Math.max(0, Math.min(canvas.height - paddle.height, player2.y));
+            } else {
+                if (player1.upKey && player1.y > 0) {
+                    player1.y -= paddle.speed;
+                }
+                if (player1.downKey && player1.y < canvas.height - paddle.height) {
+                    player1.y += paddle.speed;
+                }
+                
+                if (player2.upKey && player2.y > 0) {
+                    player2.y -= paddle.speed;
+                }
+                if (player2.downKey && player2.y < canvas.height - paddle.height) {
+                    player2.y += paddle.speed;
+                }
+            }
+        }
+        
+        function updateBall() {
+            ball.x += ball.speedX;
+            ball.y += ball.speedY;
+            
+            if (ball.y - ball.radius < 0 || ball.y + ball.radius > canvas.height) {
+                ball.speedY = -ball.speedY;
+            }
+            
+            if (ball.x - ball.radius < player1.x + paddle.width &&
+                ball.y > player1.y && ball.y < player1.y + paddle.height) {
+                ball.speedX = Math.abs(ball.speedX);
+                let hitPos = (ball.y - (player1.y + paddle.height / 2)) / (paddle.height / 2);
+                ball.speedY = hitPos * 8;
+                ball.speedX *= 1.05;
+            }
+            
+            if (ball.x + ball.radius > player2.x &&
+                ball.y > player2.y && ball.y < player2.y + paddle.height) {
+                ball.speedX = -Math.abs(ball.speedX);
+                let hitPos = (ball.y - (player2.y + paddle.height / 2)) / (paddle.height / 2);
+                ball.speedY = hitPos * 8;
+                ball.speedX *= 1.05;
+            }
+            
+            if (ball.x < 0) {
+                player2.score++;
+                updateScore();
+                resetBall();
+            }
+            
+            if (ball.x > canvas.width) {
+                player1.score++;
+                updateScore();
+                resetBall();
+            }
+            
+            if (Math.abs(ball.speedX) > ball.maxSpeed) {
+                ball.speedX = ball.speedX > 0 ? ball.maxSpeed : -ball.maxSpeed;
+            }
+        }
+        
+        function updateScore() {
+            scoreDisplay.textContent = `${player1.score} - ${player2.score}`;
+        }
+        
+        function draw() {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            drawNet();
+            drawRect(player1.x, player1.y, paddle.width, paddle.height);
+            drawRect(player2.x, player2.y, paddle.width, paddle.height);
+            drawCircle(ball.x, ball.y, ball.radius);
+            
+            if (paused) {
+                ctx.fillStyle = '#fff';
+                ctx.font = '48px Courier New';
+                ctx.textAlign = 'center';
+                ctx.fillText('PAUSA', canvas.width / 2, canvas.height / 2);
+            }
+        }
+        
+        function gameLoop() {
+            if (!gameRunning) return;
+            
+            if (!paused) {
+                updatePaddles();
+                updateBall();
+            }
+            
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        startScreen.style.display = 'block';
+    </script>
+</body>
+</html>
