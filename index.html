@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tennis Vintage Atari</title>
+    <title>Tennis Vintage Atari - Multiplayer</title>
     <style>
         * {
             user-select: none;
@@ -112,7 +112,7 @@
             right: 0;
         }
         
-        #startScreen {
+        #startScreen, #lobbyScreen {
             position: absolute;
             background: rgba(0, 0, 0, 0.95);
             padding: 40px;
@@ -120,9 +120,10 @@
             display: none;
             z-index: 1000;
             pointer-events: all;
+            max-width: 90vw;
         }
         
-        #startScreen h1 {
+        #startScreen h1, #lobbyScreen h1 {
             font-size: 36px;
             margin-bottom: 20px;
         }
@@ -152,6 +153,52 @@
             background: #fff;
             color: #000;
         }
+        
+        input {
+            background: #000;
+            color: #fff;
+            border: 2px solid #fff;
+            padding: 10px;
+            font-size: 16px;
+            font-family: 'Courier New', monospace;
+            margin: 10px;
+            text-align: center;
+        }
+        
+        #roomCode {
+            font-size: 24px;
+            letter-spacing: 5px;
+            margin: 20px 0;
+            padding: 10px;
+            border: 2px solid #fff;
+            display: inline-block;
+        }
+        
+        #waitingMessage {
+            margin: 20px 0;
+            font-size: 18px;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        
+        .status-online {
+            background: #0f0;
+        }
+        
+        .status-offline {
+            background: #f00;
+        }
+        
+        #playerStatus {
+            font-size: 14px;
+            margin: 10px 0;
+        }
     </style>
 </head>
 <body>
@@ -160,14 +207,24 @@
             <h1>PONG</h1>
             <div id="modeSelection">
                 <p>SELEZIONA MODALITÀ:</p>
-                <button id="vsPlayerButton">VS GIOCATORE</button>
+                <button id="vsPlayerButton">VS GIOCATORE LOCALE</button>
                 <button id="vsComputerButton">VS COMPUTER</button>
+                <button id="createRoomButton">CREA PARTITA ONLINE</button>
+                <button id="joinRoomButton">UNISCITI A PARTITA</button>
             </div>
             <div id="controls">
                 <p class="desktop-controls">W / S o ↑ / ↓ per muovere</p>
                 <p class="mobile-controls" style="display:none;">Tocca sinistra/destra per muovere</p>
             </div>
         </div>
+        
+        <div id="lobbyScreen">
+            <h1>LOBBY</h1>
+            <div id="lobbyContent"></div>
+            <button id="backButton">TORNA AL MENU</button>
+        </div>
+        
+        <div id="playerStatus"></div>
         <div id="score">0 - 0</div>
         <canvas id="gameCanvas" width="800" height="600"></canvas>
         <div class="touch-controls">
@@ -176,22 +233,43 @@
         </div>
         <div id="controls">
             <p class="desktop-controls">W/S o ↑/↓ per muovere | SPAZIO: Pausa</p>
-            <p class="mobile-controls" style="display:none;">Tocca sinistra per muovere | Centro per pausa</p>
+            <p class="mobile-controls" style="display:none;">Tocca per muovere | Centro per pausa</p>
         </div>
     </div>
 
-    <script>
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getDatabase, ref, set, onValue, push, remove, get, update, onDisconnect } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCzTJNm03ohcT9W0EGaMyn3rDvGx6lAYOc",
+            authDomain: "pongremote-dd1ba.firebaseapp.com",
+            databaseURL: "https://pongremote-dd1ba-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "pongremote-dd1ba",
+            storageBucket: "pongremote-dd1ba.firebasestorage.app",
+            messagingSenderId: "969793202103",
+            appId: "1:969793202103:web:cd8c52577657616f672a32"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const database = getDatabase(app);
+
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const scoreDisplay = document.getElementById('score');
         const startScreen = document.getElementById('startScreen');
+        const lobbyScreen = document.getElementById('lobbyScreen');
+        const playerStatusDiv = document.getElementById('playerStatus');
         
         let gameRunning = false;
         let paused = false;
         let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         let vsComputer = false;
+        let isOnlineGame = false;
+        let isHost = false;
+        let roomId = null;
+        let playerId = null;
         let aiSpeed = 4;
-        let aiReactionDelay = 0;
         
         if (isMobile) {
             document.querySelectorAll('.desktop-controls').forEach(el => el.style.display = 'none');
@@ -231,32 +309,240 @@
             downKey: false
         };
         
-        const touchLeft = document.getElementById('touchLeft');
-        const touchRight = document.getElementById('touchRight');
-        const vsPlayerButton = document.getElementById('vsPlayerButton');
-        const vsComputerButton = document.getElementById('vsComputerButton');
+        function generateRoomCode() {
+            return Math.random().toString(36).substring(2, 8).toUpperCase();
+        }
         
-        vsPlayerButton.addEventListener('click', function() {
+        async function createRoom() {
+            roomId = generateRoomCode();
+            playerId = 'player1';
+            isHost = true;
+            isOnlineGame = true;
+            
+            const roomRef = ref(database, `rooms/${roomId}`);
+            await set(roomRef, {
+                host: playerId,
+                player1: {
+                    connected: true,
+                    y: player1.y,
+                    score: 0
+                },
+                player2: {
+                    connected: false,
+                    y: player2.y,
+                    score: 0
+                },
+                ball: {
+                    x: ball.x,
+                    y: ball.y,
+                    speedX: ball.speedX,
+                    speedY: ball.speedY
+                },
+                gameState: 'waiting',
+                lastUpdate: Date.now()
+            });
+            
+            const playerRef = ref(database, `rooms/${roomId}/player1`);
+            onDisconnect(playerRef).update({ connected: false });
+            
+            showLobby(true);
+            listenToRoom();
+        }
+        
+        async function joinRoom(code) {
+            roomId = code.toUpperCase();
+            playerId = 'player2';
+            isHost = false;
+            isOnlineGame = true;
+            
+            const roomRef = ref(database, `rooms/${roomId}`);
+            const snapshot = await get(roomRef);
+            
+            if (!snapshot.exists()) {
+                alert('Stanza non trovata!');
+                return;
+            }
+            
+            const roomData = snapshot.val();
+            if (roomData.player2.connected) {
+                alert('Stanza piena!');
+                return;
+            }
+            
+            await update(ref(database, `rooms/${roomId}/player2`), {
+                connected: true
+            });
+            
+            await update(ref(database, `rooms/${roomId}`), {
+                gameState: 'playing'
+            });
+            
+            const playerRef = ref(database, `rooms/${roomId}/player2`);
+            onDisconnect(playerRef).update({ connected: false });
+            
+            showLobby(false);
+            listenToRoom();
+            startGame();
+        }
+        
+        function showLobby(isCreating) {
+            startScreen.style.display = 'none';
+            lobbyScreen.style.display = 'block';
+            
+            const lobbyContent = document.getElementById('lobbyContent');
+            
+            if (isCreating) {
+                lobbyContent.innerHTML = `
+                    <div id="roomCode">${roomId}</div>
+                    <div id="waitingMessage">In attesa del secondo giocatore...</div>
+                    <p>Condividi questo codice con un amico!</p>
+                `;
+            } else {
+                lobbyContent.innerHTML = `
+                    <p>Connesso alla stanza: <strong>${roomId}</strong></p>
+                    <p>In attesa di iniziare...</p>
+                `;
+            }
+        }
+        
+        function listenToRoom() {
+            const roomRef = ref(database, `rooms/${roomId}`);
+            
+            onValue(roomRef, (snapshot) => {
+                if (!snapshot.exists()) {
+                    if (gameRunning) {
+                        alert('La stanza è stata chiusa!');
+                        backToMenu();
+                    }
+                    return;
+                }
+                
+                const data = snapshot.val();
+                
+                updatePlayerStatus(data.player1.connected, data.player2.connected);
+                
+                if (data.gameState === 'playing' && !gameRunning) {
+                    lobbyScreen.style.display = 'none';
+                    startGame();
+                }
+                
+                if (gameRunning) {
+                    if (isHost) {
+                        player2.y = data.player2.y;
+                        player2.score = data.player2.score;
+                    } else {
+                        player1.y = data.player1.y;
+                        player1.score = data.player1.score;
+                        ball.x = data.ball.x;
+                        ball.y = data.ball.y;
+                        ball.speedX = data.ball.speedX;
+                        ball.speedY = data.ball.speedY;
+                    }
+                    updateScore();
+                }
+                
+                if (!data.player1.connected || !data.player2.connected) {
+                    if (gameRunning && data.gameState === 'playing') {
+                        paused = true;
+                    }
+                }
+            });
+        }
+        
+        function updatePlayerStatus(p1Connected, p2Connected) {
+            playerStatusDiv.innerHTML = `
+                <span class="status-indicator ${p1Connected ? 'status-online' : 'status-offline'}"></span>
+                Giocatore 1
+                <span style="margin: 0 20px;">|</span>
+                <span class="status-indicator ${p2Connected ? 'status-online' : 'status-offline'}"></span>
+                Giocatore 2
+            `;
+        }
+        
+        async function updatePlayerPosition() {
+            if (!isOnlineGame || !roomId) return;
+            
+            const myPlayer = isHost ? 'player1' : 'player2';
+            const myY = isHost ? player1.y : player2.y;
+            
+            await update(ref(database, `rooms/${roomId}/${myPlayer}`), {
+                y: myY
+            });
+        }
+        
+        async function updateGameState() {
+            if (!isOnlineGame || !isHost) return;
+            
+            await update(ref(database, `rooms/${roomId}`), {
+                ball: {
+                    x: ball.x,
+                    y: ball.y,
+                    speedX: ball.speedX,
+                    speedY: ball.speedY
+                },
+                player1: {
+                    connected: true,
+                    y: player1.y,
+                    score: player1.score
+                },
+                lastUpdate: Date.now()
+            });
+        }
+        
+        async function updateScore() {
+            scoreDisplay.textContent = `${player1.score} - ${player2.score}`;
+            
+            if (isOnlineGame && isHost) {
+                await update(ref(database, `rooms/${roomId}/player1`), {
+                    score: player1.score
+                });
+                await update(ref(database, `rooms/${roomId}/player2`), {
+                    score: player2.score
+                });
+            }
+        }
+        
+        async function backToMenu() {
+            if (roomId) {
+                await remove(ref(database, `rooms/${roomId}`));
+            }
+            
+            gameRunning = false;
+            isOnlineGame = false;
+            roomId = null;
+            playerId = null;
+            isHost = false;
+            player1.score = 0;
+            player2.score = 0;
+            
+            lobbyScreen.style.display = 'none';
+            startScreen.style.display = 'block';
+            playerStatusDiv.innerHTML = '';
+            updateScore();
+        }
+        
+        document.getElementById('vsPlayerButton').addEventListener('click', () => {
             vsComputer = false;
+            isOnlineGame = false;
             startGame();
         });
         
-        vsPlayerButton.addEventListener('touchend', function(e) {
-            e.preventDefault();
-            vsComputer = false;
-            startGame();
-        });
-        
-        vsComputerButton.addEventListener('click', function() {
+        document.getElementById('vsComputerButton').addEventListener('click', () => {
             vsComputer = true;
+            isOnlineGame = false;
             startGame();
         });
         
-        vsComputerButton.addEventListener('touchend', function(e) {
-            e.preventDefault();
-            vsComputer = true;
-            startGame();
+        document.getElementById('createRoomButton').addEventListener('click', createRoom);
+        
+        document.getElementById('joinRoomButton').addEventListener('click', () => {
+            const code = prompt('Inserisci il codice della stanza:');
+            if (code) {
+                joinRoom(code);
+            }
         });
+        
+        document.getElementById('backButton').addEventListener('click', backToMenu);
         
         let touchTracking = {
             left: { id: null, startY: 0, currentY: 0 },
@@ -269,7 +555,6 @@
             
             for (let i = 0; i < touches.length; i++) {
                 const touch = touches[i];
-                const rect = canvas.getBoundingClientRect();
                 const x = touch.clientX;
                 const y = touch.clientY;
                 
@@ -350,6 +635,7 @@
         
         function startGame() {
             startScreen.style.display = 'none';
+            lobbyScreen.style.display = 'none';
             gameRunning = true;
             resetBall();
             gameLoop();
@@ -380,44 +666,78 @@
             }
         }
         
+        let lastPositionUpdate = 0;
+        const positionUpdateInterval = 50;
+        
         function updatePaddles() {
             if (isMobile) {
-                if (touchTracking.left.id !== null) {
-                    const delta = touchTracking.left.currentY - touchTracking.left.startY;
-                    player1.y += delta * 0.5;
-                    touchTracking.left.startY = touchTracking.left.currentY;
+                const myPlayer = isHost ? player1 : player2;
+                const otherPlayer = isHost ? player2 : player1;
+                const myTouch = isHost ? touchTracking.left : touchTracking.right;
+                
+                if (myTouch.id !== null) {
+                    const delta = myTouch.currentY - myTouch.startY;
+                    myPlayer.y += delta * 0.5;
+                    myTouch.startY = myTouch.currentY;
                 }
                 
-                if (!vsComputer && touchTracking.right.id !== null) {
-                    const delta = touchTracking.right.currentY - touchTracking.right.startY;
-                    player2.y += delta * 0.5;
-                    touchTracking.right.startY = touchTracking.right.currentY;
-                }
+                myPlayer.y = Math.max(0, Math.min(canvas.height - paddle.height, myPlayer.y));
                 
-                player1.y = Math.max(0, Math.min(canvas.height - paddle.height, player1.y));
-                if (!vsComputer) {
-                    player2.y = Math.max(0, Math.min(canvas.height - paddle.height, player2.y));
+                if (!isOnlineGame) {
+                    const otherTouch = isHost ? touchTracking.right : touchTracking.left;
+                    if (!vsComputer && otherTouch.id !== null) {
+                        const delta = otherTouch.currentY - otherTouch.startY;
+                        otherPlayer.y += delta * 0.5;
+                        otherTouch.startY = otherTouch.currentY;
+                    }
+                    if (!vsComputer) {
+                        otherPlayer.y = Math.max(0, Math.min(canvas.height - paddle.height, otherPlayer.y));
+                    }
                 }
             } else {
-                if (player1.upKey && player1.y > 0) {
-                    player1.y -= paddle.speed;
-                }
-                if (player1.downKey && player1.y < canvas.height - paddle.height) {
-                    player1.y += paddle.speed;
-                }
-                
-                if (!vsComputer) {
-                    if (player2.upKey && player2.y > 0) {
-                        player2.y -= paddle.speed;
+                if (isOnlineGame) {
+                    if (isHost) {
+                        if (player1.upKey && player1.y > 0) {
+                            player1.y -= paddle.speed;
+                        }
+                        if (player1.downKey && player1.y < canvas.height - paddle.height) {
+                            player1.y += paddle.speed;
+                        }
+                    } else {
+                        if (player2.upKey && player2.y > 0) {
+                            player2.y -= paddle.speed;
+                        }
+                        if (player2.downKey && player2.y < canvas.height - paddle.height) {
+                            player2.y += paddle.speed;
+                        }
                     }
-                    if (player2.downKey && player2.y < canvas.height - paddle.height) {
-                        player2.y += paddle.speed;
+                } else {
+                    if (player1.upKey && player1.y > 0) {
+                        player1.y -= paddle.speed;
+                    }
+                    if (player1.downKey && player1.y < canvas.height - paddle.height) {
+                        player1.y += paddle.speed;
+                    }
+                    
+                    if (!vsComputer) {
+                        if (player2.upKey && player2.y > 0) {
+                            player2.y -= paddle.speed;
+                        }
+                        if (player2.downKey && player2.y < canvas.height - paddle.height) {
+                            player2.y += paddle.speed;
+                        }
                     }
                 }
             }
             
-            if (vsComputer) {
+            if (vsComputer && !isOnlineGame) {
                 updateAI();
+            }
+            
+            const now = Date.now();
+            if (isOnlineGame && now - lastPositionUpdate > positionUpdateInterval) {
+                updatePlayerPosition();
+                lastPositionUpdate = now;
             }
         }
         
@@ -444,6 +764,8 @@
         }
         
         function updateBall() {
+            if (isOnlineGame && !isHost) return;
+            
             ball.x += ball.speedX;
             ball.y += ball.speedY;
             
@@ -482,10 +804,10 @@
             if (Math.abs(ball.speedX) > ball.maxSpeed) {
                 ball.speedX = ball.speedX > 0 ? ball.maxSpeed : -ball.maxSpeed;
             }
-        }
-        
-        function updateScore() {
-            scoreDisplay.textContent = `${player1.score} - ${player2.score}`;
+            
+            if (isOnlineGame && isHost) {
+                updateGameState();
+            }
         }
         
         function draw() {
